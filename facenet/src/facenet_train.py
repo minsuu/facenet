@@ -92,7 +92,13 @@ def main(argv=None):  # pylint: disable=unused-argument
     
     np.random.seed(seed=FLAGS.seed)
     dataset = facenet.get_dataset(FLAGS.data_dir)
-    train_set, validation_set = facenet.split_dataset(dataset, FLAGS.train_set_fraction, FLAGS.split_mode)
+    train_set, _ = facenet.split_dataset(dataset, FLAGS.train_set_fraction, FLAGS.split_mode)
+
+    image_paths_list = []
+    for i in range(len(train_set)):
+        for image_path in train_set[i].image_paths:
+            image_paths_list.append((image_path, i))
+
     
     print('Model directory: %s' % model_dir)
 
@@ -106,18 +112,34 @@ def main(argv=None):  # pylint: disable=unused-argument
         # Placeholder for phase_train
         phase_train_placeholder = tf.placeholder(tf.bool, name='phase_train')
 
+        # Placeholder for labels
+        labels_placeholder = tf.placeholder(tf.int64, shape=(None), name='labels')
+        
         # Build the inference graph
-        embeddings = network.inference(images_placeholder, FLAGS.pool_type, FLAGS.use_lrn, 
+        activations = network.inference(images_placeholder, FLAGS.pool_type, FLAGS.use_lrn, 
                                        FLAGS.keep_probability, phase_train=phase_train_placeholder)
 
-        # Split example embeddings into anchor, positive and negative
-        anchor, positive, negative = tf.split(0, 3, embeddings)
+        # Linear mapping of activations to an embedding
+#         affn1 = facenet.affine(activations, 896, 128)
+#         dropout = tf.nn.dropout(affn1, FLAGS.keep_probability)
+#         embeddings = tf.nn.l2_normalize(dropout, 1, 1e-10, name='embeddings')
+#         # Split example embeddings into anchor, positive and negative
+#         anchor, positive, negative = tf.split(0, 3, embeddings)
+#         # Calculate triplet loss
+#         triplet_loss = facenet.triplet_loss(anchor, positive, negative, FLAGS.alpha)
 
-        # Calculate triplet loss
-        loss = facenet.triplet_loss(anchor, positive, negative, FLAGS.alpha)
+        # Linear mapping of activations to class bla bla bla
+        nrof_classes = len(train_set)
+        logits = facenet.affine(activations, 896, nrof_classes)
+        cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(
+            logits, labels_placeholder, name='cross_entropy_per_example')
+        cross_entropy_mean = tf.reduce_mean(cross_entropy, name='cross_entropy')
+        #tf.add_to_collection('losses', cross_entropy_mean)
+            
 
         # Build a Graph that trains the model with one batch of examples and updates the model parameters
-        train_op, _ = facenet.train(loss, global_step, FLAGS.optimizer, FLAGS.learning_rate, FLAGS.moving_average_decay)
+        classifier_train_op, _ = facenet.train(cross_entropy_mean, global_step, FLAGS.optimizer, FLAGS.learning_rate, FLAGS.moving_average_decay)
+        #triplet_loss_train_op, _ = facenet.train(triplet_loss, global_step, FLAGS.optimizer, FLAGS.learning_rate, FLAGS.moving_average_decay)
 
         # Create a saver
         saver = tf.train.Saver(tf.all_variables(), max_to_keep=0)
@@ -143,33 +165,46 @@ def main(argv=None):  # pylint: disable=unused-argument
                 else:
                     raise ValueError('Checkpoint not found')
 
-            # Training and validation loop
+            # Training and evaluation loop
+            image_paths_buffer = []
             for epoch in range(FLAGS.max_nrof_epochs):
-                # Train for one epoch
-                step = train(sess, train_set, epoch, images_placeholder, phase_train_placeholder,
-                             global_step, embeddings, loss, train_op, summary_op, summary_writer)
+                nrof_images = FLAGS.epoch_size * FLAGS.batch_size
                 
-                # Store the state of the random number generator
-                rng_state = np.random.get_state()
-                # Test on validation set
-                np.random.seed(seed=FLAGS.seed)
-                validate(sess, validation_set, epoch, images_placeholder, phase_train_placeholder,
-                         global_step, embeddings, loss, 'validation', summary_writer)
-                # Test on training set
-                np.random.seed(seed=FLAGS.seed)
-                validate(sess, train_set, epoch, images_placeholder, phase_train_placeholder,
-                         global_step, embeddings, loss, 'training', summary_writer)
-                # Restore state of the random number generator
-                np.random.set_state(rng_state)
-  
+                # Fill buffer of image paths if needed
+                if len(image_paths_buffer)<nrof_images:
+                    np.random.shuffle(image_paths_list)
+                    image_paths_buffer += image_paths_list
+
+                for batch_number in range(FLAGS.epoch_size):
+                    start_time = time.time()
+                    
+                    # Advance the buffer
+                    image_paths_batch = image_paths_buffer[0:FLAGS.batch_size]
+                    image_paths, labels = zip(*image_paths_batch)
+                    image_paths_buffer = image_paths_buffer[FLAGS.batch_size:-1]
+
+                    images_batch = facenet.load_data(image_paths[FLAGS.batch_size*batch_number:FLAGS.batch_size*(batch_number+1)], 
+                                                   FLAGS.random_crop, FLAGS.random_flip, FLAGS.image_size)
+                    labels_batch = labels[FLAGS.batch_size*batch_number:FLAGS.batch_size*(batch_number+1)]
+
+                    feed_dict = {images_placeholder: images_batch, labels_placeholder: labels_batch, phase_train_placeholder: True}
+
+                    err, _, step = sess.run([cross_entropy_mean, classifier_train_op, global_step], feed_dict=feed_dict)
+                    if (batch_number % 20 == 0):
+                        summary_str, step = sess.run([summary_op, global_step], feed_dict=feed_dict)
+                        summary_writer.add_summary(summary_str, global_step=step)
+
+                    duration = time.time() - start_time
+                    print('Epoch: [%d][%d/%d]\tTime %.3f\Loss %2.3f' %
+                          (epoch, batch_number, FLAGS.epoch_size, duration, err))
+                    
                 if (epoch % FLAGS.checkpoint_period == 0) or (epoch==FLAGS.max_nrof_epochs-1):
                   # Save the model checkpoint
                   print('Saving checkpoint')
                   checkpoint_path = os.path.join(model_dir, 'model.ckpt')
                   saver.save(sess, checkpoint_path, global_step=step)
 
-
-def train(sess, dataset, epoch, images_placeholder, phase_train_placeholder,
+def train_triplet_loss(sess, dataset, epoch, images_placeholder, phase_train_placeholder,
           global_step, embeddings, loss, train_op, summary_op, summary_writer):
     batch_number = 0
     while batch_number < FLAGS.epoch_size:

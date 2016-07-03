@@ -534,7 +534,7 @@ def sample_people(dataset, people_per_batch, images_per_person):
     num_per_class.append(nrof_images_from_class)
     i+=1
 
-  return image_paths, num_per_class
+  return image_paths, num_per_class, sampled_class_indices
 
 def calculate_roc(thresholds, embeddings1, embeddings2, actual_issame, seed):
   assert(embeddings1.shape[0] == embeddings2.shape[0])
