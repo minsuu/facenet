@@ -36,10 +36,6 @@ def inference(images, pool_type, use_lrn, keep_probability, phase_train=True):
   incept5a = facenet.inception(incept4e,    1024, 1, 384, 192, 384, 0, 0, 3, 128, 1, pool_type, 'incept5a', phase_train=phase_train, use_batch_norm=True)
   incept5b = facenet.inception(incept5a, 896, 1, 384, 192, 384, 0, 0, 3, 128, 1, 'MAX', 'incept5b', phase_train=phase_train, use_batch_norm=True)
   pool6 = facenet.apool(incept5b,  3, 3, 1, 1, 'VALID')
-
   resh1 = tf.reshape(pool6, [-1, 896])
-  affn1 = facenet.affine(resh1, 896, 128)
-  dropout = tf.nn.dropout(affn1, keep_probability)
-  norm = tf.nn.l2_normalize(dropout, 1, 1e-10, name='embeddings')
 
-  return norm
+  return resh1

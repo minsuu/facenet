@@ -166,26 +166,24 @@ def main(argv=None):  # pylint: disable=unused-argument
                     raise ValueError('Checkpoint not found')
 
             # Training and evaluation loop
-            image_paths_buffer = []
+            data_buffer = []
             for epoch in range(FLAGS.max_nrof_epochs):
                 nrof_images = FLAGS.epoch_size * FLAGS.batch_size
                 
                 # Fill buffer of image paths if needed
-                if len(image_paths_buffer)<nrof_images:
+                if len(data_buffer)<nrof_images:
                     np.random.shuffle(image_paths_list)
-                    image_paths_buffer += image_paths_list
+                    data_buffer += image_paths_list
 
                 for batch_number in range(FLAGS.epoch_size):
                     start_time = time.time()
                     
                     # Advance the buffer
-                    image_paths_batch = image_paths_buffer[0:FLAGS.batch_size]
-                    image_paths, labels = zip(*image_paths_batch)
-                    image_paths_buffer = image_paths_buffer[FLAGS.batch_size:-1]
+                    data_batch = data_buffer[0:FLAGS.batch_size]
+                    data_buffer = data_buffer[FLAGS.batch_size:-1]
+                    paths_batch, labels_batch = zip(*data_batch)
 
-                    images_batch = facenet.load_data(image_paths[FLAGS.batch_size*batch_number:FLAGS.batch_size*(batch_number+1)], 
-                                                   FLAGS.random_crop, FLAGS.random_flip, FLAGS.image_size)
-                    labels_batch = labels[FLAGS.batch_size*batch_number:FLAGS.batch_size*(batch_number+1)]
+                    images_batch = facenet.load_data(paths_batch, FLAGS.random_crop, FLAGS.random_flip, FLAGS.image_size)
 
                     feed_dict = {images_placeholder: images_batch, labels_placeholder: labels_batch, phase_train_placeholder: True}
 
@@ -195,7 +193,7 @@ def main(argv=None):  # pylint: disable=unused-argument
                         summary_writer.add_summary(summary_str, global_step=step)
 
                     duration = time.time() - start_time
-                    print('Epoch: [%d][%d/%d]\tTime %.3f\Loss %2.3f' %
+                    print('Epoch: [%d][%d/%d]\tTime %.3f\tLoss %2.3f' %
                           (epoch, batch_number, FLAGS.epoch_size, duration, err))
                     
                 if (epoch % FLAGS.checkpoint_period == 0) or (epoch==FLAGS.max_nrof_epochs-1):
